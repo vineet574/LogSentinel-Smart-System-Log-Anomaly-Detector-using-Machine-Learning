@@ -1,0 +1,57 @@
+import os
+import re
+import pandas as pd
+from datetime import datetime
+from sklearn.ensemble import IsolationForest
+
+LOG_PATH = "/var/log/auth.log"  # Replace with appropriate log file
+ANOMALY_OUTPUT = "anomalies.txt"
+
+def parse_log_line(line):
+    match = re.match(r'(\w+\s+\d+\s[\d:]+)\s(\S+)\s(\S+)\[(\d+)\]:\s(.*)', line)
+    if match:
+        timestamp, host, service, pid, message = match.groups()
+        try:
+            dt = datetime.strptime(timestamp, "%b %d %H:%M:%S")
+            dt = dt.replace(year=datetime.now().year)
+        except ValueError:
+            dt = datetime.now()
+        return {
+            "timestamp": dt,
+            "host": host,
+            "service": service,
+            "pid": int(pid),
+            "message": message
+        }
+    return None
+
+def preprocess_logs(log_file):
+    entries = []
+    with open(log_file, 'r') as f:
+        for line in f:
+            parsed = parse_log_line(line)
+            if parsed:
+                entries.append(parsed)
+    df = pd.DataFrame(entries)
+    df['hour'] = df['timestamp'].apply(lambda x: x.hour)
+    df['msg_len'] = df['message'].apply(len)
+    return df[['hour', 'pid', 'msg_len']], entries
+
+def detect_anomalies(X):
+    model = IsolationForest(contamination=0.05)
+    model.fit(X)
+    preds = model.predict(X)
+    return preds == -1  # Boolean mask of anomalies
+
+def main():
+    print("Analyzing log file for anomalies...")
+    X, original_entries = preprocess_logs(LOG_PATH)
+    anomalies = detect_anomalies(X)
+    with open(ANOMALY_OUTPUT, 'w') as f:
+        for i, is_anomaly in enumerate(anomalies):
+            if is_anomaly:
+                f.write(str(original_entries[i]) + '\n')
+    print(f"Anomalies written to: {ANOMALY_OUTPUT}")
+
+if __name__ == "__main__":
+    main()
